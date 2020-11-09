@@ -1,0 +1,19 @@
+{
+  "name": "veldapps-xml",
+  "version": "1.0.0",
+  "description": "Veldapps package for handling XML resources",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/relluf/veldapps-xml.git"
+  },
+  "author": "ralph",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/relluf/veldapps-xml/issues"
+  },
+  "homepage": "https://github.com/relluf/veldapps-xml#readme"
+}
