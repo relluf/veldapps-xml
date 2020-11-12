@@ -1,4 +1,4 @@
-define(["./fast-xml-parser/parser"], function(FXP) {
+define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 	
 	var Xml;
 
@@ -114,9 +114,7 @@ define(["./fast-xml-parser/parser"], function(FXP) {
 	function imkl2geojson(root, opts) {
 
 		function scrape(gml_root, opts) {
-			var result = {};
-	
-			opts = opts || {};
+			var result = {}; opts = opts || {};
 			
 			function walk(item, path, objs) {
 				
@@ -160,13 +158,13 @@ define(["./fast-xml-parser/parser"], function(FXP) {
 					result[k] = arr;
 				}
 			}
-			
+
 			return result;
 		}
 
 		opts = opts || {};
 		
-		var scraped = scrape(gml(root, opts));
+		var scraped = scrape(gml(root, false));
 		var layers = {}, all = [];
 
 		for(var layer in scraped) {
@@ -193,6 +191,59 @@ define(["./fast-xml-parser/parser"], function(FXP) {
 		return layers;
 	}
 	
+	var replace_xmlEntities = (str) => {
+		return str && str.replace ? str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+			.replace(/&apos;/g, "'").replace("&quot;", "\"") : str;
+	};
+	nameOf.methods.push(
+		(obj) => {
+			if(obj['@_xsi:type']) {
+				var entity = {}; 
+				obj = js.mixIn(obj); 
+				entity[obj['@_xsi:type']] = obj;
+				delete obj['@_xsi:type'];
+				return js.nameOf(entity);
+			}
+		},
+		(obj) => {
+			var keys = Object.keys(obj);
+			if(keys.length === 2 && keys[1] === "@_xlink:href-resolved") {
+				if(obj[keys[1]] !== undefined) {
+					return js.nameOf(obj[keys[1]]);
+				} else {
+					return js.nameOf(obj[keys[0]]);
+				}
+			}
+			if(keys.length === 1) {
+				obj = obj[keys[0]];
+				if(keys[0] === "gml:TimeInstant") {
+					return obj['gml:timePosition'];
+				}
+				if(keys[0] === "gml:Point") {
+					return obj['gml:pos'] && js.nameOf(obj['gml:pos']);
+				}
+				if(keys.length && keys[0].indexOf(":") !== -1) {
+					var name = js.nameOf(obj);
+					return ["[object Object]", "Object", "undefined"].indexOf(name) === -1 ? name : keys[0].split(":").pop();
+				}
+			}
+		},
+		(obj) => {
+			var t = obj['#text'];
+			return (t && js.nameOf((t = replace_xmlEntities(t)))) || t;
+		},
+		(obj) => (obj['@_name']),
+		(obj) => (obj['@_id'])
+	);
+	// nameOf.methods.after.push(
+	// 	(obj) => {
+	// 		var keys = Object.keys(obj);
+	// 		if(keys.length && keys[0].indexOf(":") !== -1) {
+	// 			var name = js.nameOf(obj);
+	// 			return ["[object Object]", "Object", "undefined"].indexOf(name) === -1 ? name : keys[0].split(":").pop();
+	// 		}
+	// 	}
+	// );
 	return (Xml = {
 		parse: (text) => FXP.parse(text, {ignoreAttributes: false}),
 		stringify: (obj, type, resolved) => {
@@ -221,8 +272,10 @@ define(["./fast-xml-parser/parser"], function(FXP) {
 				} else return value;
 			});
 		},
+		replaceXmlEntities: replace_xmlEntities,
 		
 		gml: gml, 
+		// gml2ol: gml2ol,
 		gml2geojson: gml2geojson,
 		imkl2geojson: imkl2geojson
 	});
