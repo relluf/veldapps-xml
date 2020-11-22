@@ -245,7 +245,7 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 	// 	}
 	// );
 	return (Xml = {
-		parse: (text) => FXP.parse(text, {ignoreAttributes: false}),
+		parse: (text) => FXP.parse(text, {ignoreAttributes: false, parseTrueNumberOnly: true}),
 		stringify: (obj, type, resolved) => {
 			// obj - parsed GML-entity 
 			
