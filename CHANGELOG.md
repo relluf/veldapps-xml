@@ -1,4 +1,4 @@
-### 2021/09/25 - 1.0.4
+### 2021/09/25 - 1.0.5
 
 - Introducing/packing veldapps-xml/Writer
 

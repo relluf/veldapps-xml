@@ -117,9 +117,28 @@ define(function(require) {
 			this.content(value);
 		}
 	};
-	
+
 	return {
 		define: function(ROOT_ELEM, Writers, Collectors) {
+			if(typeof Collectors === "function") {
+
+				// idea for better API: Writer.define("bodeminformatie", root, (writer, instance) => { ... }).write(context);
+				var W = {}; W[ROOT_ELEM] = Collectors, root = Writers;
+				var C = { collect: (collector, instance, context) => root };
+
+				var writer = this.define(ROOT_ELEM, W, C);
+				var write = writer.write;
+				writer.write = function(context) {
+					return write.apply(this, [ROOT_ELEM, root, context]);
+				};
+				return writer;
+				
+				// return js.override(this.define(ROOT_ELEM, W, C), {
+				// 	write: function(context) {
+				// 		return in
+				// 	}
+				// }
+			}
 			return js.mixIn({
 				write: function(collector, instance, context) {
 					this._root = null;
