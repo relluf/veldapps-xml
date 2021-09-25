@@ -191,6 +191,28 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 		return layers;
 	}
 	
+	function jsonfy(node, opts, r) {
+		if(node.getAttributeNames) {
+			var attributes = node.getAttributeNames().map(name => 
+					[name, node.getAttribute(name)]);
+			var nodes = Array.from(node.childNodes)
+					.filter(node => !(node instanceof Text) || node.textContent.trim())
+					.map(child => jsonfy(child))
+					.filter(_ => _);
+					
+			r = { x: node.nodeName };
+			if(attributes.length) r.a = attributes;
+			if(nodes.length) r.n = nodes;
+			
+		} else if(node instanceof Text) {
+			r = node.textContent;
+		} else if(node instanceof Comment) {
+		} else {
+			r = js.sf("%s", node);
+		}
+		return r;
+	}
+
 	var replace_xmlEntities = (str) => {
 		return str && str.replace ? str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
 			.replace(/&apos;/g, "'").replace("&quot;", "\"") : str;
@@ -273,6 +295,8 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 			});
 		},
 		replaceXmlEntities: replace_xmlEntities,
+		
+		jsonfy: (node, options) => jsonfy(node, options),
 		
 		gml: gml, 
 		// gml2ol: gml2ol,
