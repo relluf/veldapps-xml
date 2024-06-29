@@ -191,6 +191,57 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 		return layers;
 	}
 	
+	function doc2source(node, def_ns) {
+		if(node.attributes === undefined && node.childNodes === undefined) {// && Object.keys(node.attributes).length === 0) {
+			// console.log("return")
+			// return;
+		}
+
+		var name = node.name.split(":"), 
+			ns = name.length > 1 ? name[0] : def_ns,
+			out = [];
+		
+		if(ns) {
+			ns = ns + ":";
+		} else {
+			ns = "";
+		}
+		
+		out.push(js.sf("<%s%s", ns, (name = name.pop())));
+
+// if(node.hasOwnProperty("element_only")) log(node.element_only);
+
+		if(node.element_only) {
+			out.push(" />");
+		} else if(node.attributes || node.childNodes) {
+			if(node.attributes !== undefined) {
+				var attrs = [];
+				for(var k in node.attributes) {
+					out.push(js.sf(" %s=\"%H\"", k, node.attributes[k]));
+				}
+			}
+			
+			if(node.childNodes !== undefined) {
+				out.push(">");
+				node.childNodes.forEach(function(child) {
+					if(typeof child === "string") {
+						out.push(String.format("%H", child));
+					} else if(child.comment) {
+						out.push(String.format("<!--%s-->", child.comment));
+					} else if(child.attributes || child.childNodes) {
+						out.push(doc2source(child));
+					} else if(child.element_only) {
+						out.push(String.format("<%s />", child.name));
+					}
+				});
+				out.push(String.format("</%s%s>", ns, name));
+			} else {
+				out[out.length - 1] += " />";
+			}
+		}
+		return out.join("");
+    }
+
 	function jsonfy(node, opts, r) {
 		if(node.getAttributeNames) {
 			var attributes = node.getAttributeNames().map(name => 
@@ -211,6 +262,29 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 			r = js.sf("%s", node);
 		}
 		return r;
+	}
+	function stringify(node, opts) {
+		return doc2source(node);
+	}
+
+	function getNamespaceIdentifier(xml, namespace) {
+	    // Find the root node opening tag
+	    const rootStart = xml.indexOf("<");
+	    const rootEnd = xml.indexOf(">", rootStart);
+	    const rootTag = xml.substring(rootStart, rootEnd + 1);
+	  
+	    // Find the namespace declaration
+	    const nsIndex = rootTag.indexOf(`="${namespace}"`);
+	    if (nsIndex === -1) {
+	        return null; // Namespace not found
+	    }
+	  
+	    // Extract the namespace identifier
+	    const nsDeclaration = rootTag.substring(0, nsIndex);
+	    const nsStart = nsDeclaration.lastIndexOf("xmlns:") + 6; // 6 is the length of 'xmlns:'
+	    const nsIdentifier = nsDeclaration.substring(nsStart);
+	  
+	    return nsIdentifier;
 	}
 
 	var replace_xmlEntities = (str) => {
@@ -267,37 +341,97 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 	// 	}
 	// );
 	return (Xml = {
-		parse: (text) => FXP.parse(text, {ignoreAttributes: false, parseTrueNumberOnly: true}),
-		stringify: (obj, type, resolved) => {
-			// obj - parsed GML-entity 
-			
-			if(!resolved) {
-				resolved = [];
-				var r = [];
-				r.push(Xml.stringify(obj, type, resolved));
-				for(var i = 0; i < resolved.length; ++i) {
-					r.push(Xml.stringify(resolved[i], undefined, resolved));
-				}
-				return r;
-			}
-			if(typeof type === "string") {
-				var o = {}; 
-				o[type] = obj;
-				obj = o;
-			}
-			
-			return JSON.stringify(obj, (key, value) => {
-				if(key === "@_xlink:href-resolved") {
-					if(resolved.indexOf(value) === -1) {
-						resolved.push(value);
+		parse: (text, opts) => {
+			let xml_doc = FXP.parse(text, js.mi({ignoreAttributes: false, 
+				parseTrueNumberOnly: true}, opts || {}));
+				
+			const namespaces = {}, root = xml_doc[Object.keys(xml_doc)[0]];
+			if(typeof opts !== "undefined") {
+				if(opts.namespaces) {
+					const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => [e[1], e[0]]));
+					Object.keys(root)
+						.filter(k => k.startsWith("@_xmlns") || k.endsWith(":schemaLocation"))
+						.forEach(k => {
+							namespaces[k.split(":").pop()] = {
+								url: root[k], 
+								alias: ns[root[k]] || k.split(":").pop()
+							};
+						});
+						
+					// TODO this is not foolproof (xsi:)
+					if(namespaces.schemaLocation) {
+						namespaces[''] = {
+							url: namespaces.schemaLocation.url.split(" ")[0],
+							alias: opts.defaultNSPrefix || ""
+						};
+						delete namespaces.schemaLocation;
 					}
-				} else return value;
-			});
+				}
+				const loop = (obj) => {
+					if(obj !== null && typeof obj === "object") {
+						if(typeof opts.defaultNSPrefix === "string") {
+							obj = Object.fromEntries(Object.entries(obj)
+								.map(e => e[0].includes(":") ? 
+									[e[0], loop(e[1])] : 
+									[opts.defaultNSPrefix + ":" + e[0], loop(e[1])]
+								));
+						}
+						if(typeof opts.namespaces === "object") {
+							obj = Object.fromEntries(Object.entries(obj)
+								.map(e => {
+									const qName = e[0].split(":");
+									const prefix = qName.length == 2 ? qName[0] : "";
+									const alias = (namespaces[prefix] || {}).alias || prefix;
+									return [(alias ? alias + ":" : "") + qName.pop(), loop(e[1])];
+								})
+							)
+						} else if(opts.stripNS) {
+							obj = Object.fromEntries(Object.entries(obj)
+								.map(e => [e[0].split(":").pop(), e[1]]));
+						}
+						
+					}
+					return obj;
+				};
+				xml_doc = loop(xml_doc);
+			}
+			
+			return xml_doc;	
 		},
+		// stringify: (obj, type, resolved) => {
+		// 	// obj - parsed GML-entity 
+			
+		// 	if(!resolved) {
+		// 		resolved = [];
+		// 		var r = [];
+		// 		r.push(Xml.stringify(obj, type, resolved));
+		// 		for(var i = 0; i < resolved.length; ++i) {
+		// 			r.push(Xml.stringify(resolved[i], undefined, resolved));
+		// 		}
+		// 		return r;
+		// 	}
+		// 	if(typeof type === "string") {
+		// 		var o = {}; 
+		// 		o[type] = obj;
+		// 		obj = o;
+		// 	}
+			
+		// 	return JSON.stringify(obj, (key, value) => {
+		// 		if(key === "@_xlink:href-resolved") {
+		// 			if(resolved.indexOf(value) === -1) {
+		// 				resolved.push(value);
+		// 			}
+		// 		} else return value;
+		// 	});
+		// },
 		replaceXmlEntities: replace_xmlEntities,
 		
-		jsonfy: (node, options) => jsonfy(node, options),
+		getNamespaceIdentifier: getNamespaceIdentifier,
 		
+		jsonfy: (node, options) => jsonfy(node, options),
+		stringify: (node, options) => stringify(node, options),
+
+		doc2source: doc2source,		
 		gml: gml, 
 		// gml2ol: gml2ol,
 		gml2geojson: gml2geojson,
