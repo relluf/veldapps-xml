@@ -190,7 +190,6 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 
 		return layers;
 	}
-	
 	function doc2source(node, def_ns) {
 		if(node.attributes === undefined && node.childNodes === undefined) {// && Object.keys(node.attributes).length === 0) {
 			// console.log("return")
@@ -267,7 +266,7 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 		return doc2source(node);
 	}
 
-	function getNamespaceIdentifier(xml, namespace) {
+	function getNamespacePrefix(xml, namespace) {
 	    // Find the root node opening tag
 	    const rootStart = xml.indexOf("<");
 	    const rootEnd = xml.indexOf(">", rootStart);
@@ -279,18 +278,18 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 	        return null; // Namespace not found
 	    }
 	  
-	    // Extract the namespace identifier
+	    // Extract the namespace prefix
 	    const nsDeclaration = rootTag.substring(0, nsIndex);
 	    const nsStart = nsDeclaration.lastIndexOf("xmlns:") + 6; // 6 is the length of 'xmlns:'
-	    const nsIdentifier = nsDeclaration.substring(nsStart);
+	    const nsPrefix = nsDeclaration.substring(nsStart);
 	  
-	    return nsIdentifier;
+	    return nsPrefix;
 	}
-
-	var replace_xmlEntities = (str) => {
+	function replace_xmlEntities(str) {
 		return str && str.replace ? str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
 			.replace(/&apos;/g, "'").replace("&quot;", "\"") : str;
 	};
+
 	nameOf.methods.push(
 		(obj) => {
 			if(obj['@_xsi:type']) {
@@ -331,73 +330,81 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 		(obj) => (obj['@_name']),
 		(obj) => (obj['@_id'])
 	);
-	// nameOf.methods.after.push(
-	// 	(obj) => {
-	// 		var keys = Object.keys(obj);
-	// 		if(keys.length && keys[0].indexOf(":") !== -1) {
-	// 			var name = js.nameOf(obj);
-	// 			return ["[object Object]", "Object", "undefined"].indexOf(name) === -1 ? name : keys[0].split(":").pop();
-	// 		}
-	// 	}
-	// );
 	return (Xml = {
 		parse: (text, opts) => {
 			let xml_doc = FXP.parse(text, js.mi({ignoreAttributes: false, 
 				parseTrueNumberOnly: true}, opts || {}));
 				
-			const namespaces = {}, root = xml_doc[Object.keys(xml_doc)[0]];
 			if(typeof opts !== "undefined") {
-				if(opts.namespaces) {
-					const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => [e[1], e[0]]));
-					Object.keys(root)
-						.filter(k => k.startsWith("@_xmlns") || k.endsWith(":schemaLocation"))
-						.forEach(k => {
-							namespaces[k.split(":").pop()] = {
-								url: root[k], 
-								alias: ns[root[k]] || k.split(":").pop()
-							};
-						});
-						
-					// TODO this is not foolproof (xsi:)
-					if(namespaces.schemaLocation) {
-						namespaces[''] = {
-							url: namespaces.schemaLocation.url.split(" ")[0],
-							alias: opts.defaultNSPrefix || ""
-						};
-						delete namespaces.schemaLocation;
-					}
-				}
-				const loop = (obj) => {
-					if(obj !== null && typeof obj === "object") {
-						if(typeof opts.defaultNSPrefix === "string") {
-							obj = Object.fromEntries(Object.entries(obj)
-								.map(e => e[0].includes(":") ? 
-									[e[0], loop(e[1])] : 
-									[opts.defaultNSPrefix + ":" + e[0], loop(e[1])]
-								));
-						}
-						if(typeof opts.namespaces === "object") {
-							obj = Object.fromEntries(Object.entries(obj)
-								.map(e => {
-									const qName = e[0].split(":");
-									const prefix = qName.length == 2 ? qName[0] : "";
-									const alias = (namespaces[prefix] || {}).alias || prefix;
-									return [(alias ? alias + ":" : "") + qName.pop(), loop(e[1])];
-								})
-							)
-						} else if(opts.stripNS) {
-							obj = Object.fromEntries(Object.entries(obj)
-								.map(e => [e[0].split(":").pop(), e[1]]));
-						}
-						
-					}
-					return obj;
-				};
-				xml_doc = loop(xml_doc);
+				Xml.applyParseOptions(xml_doc, opts);
 			}
 			
 			return xml_doc;	
 		},
+		applyParseOptions: (xml_doc, opts) => {
+			const namespaces = {}, root = xml_doc[Object.keys(xml_doc)[0]];
+			if(opts.namespaces) {
+				const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => [e[1], e[0]]));
+				Object.keys(root)
+					.filter(k => k.startsWith("@_xmlns") || k.endsWith(":schemaLocation"))
+					.forEach(k => {
+						namespaces[k.split(":").pop()] = {
+							url: root[k], 
+							alias: ns[root[k]] || k.split(":").pop()
+						};
+					});
+					
+				// TODO this is not foolproof (xsi:)
+				if(namespaces.schemaLocation) {
+					namespaces[''] = {
+						url: namespaces.schemaLocation.url.split(" ")[0],
+						alias: opts.defaultNSPrefix || ""
+					};
+					delete namespaces.schemaLocation;
+				}
+			}
+			const loop = (obj) => {
+				if(obj instanceof Array) return obj.map(o => loop(o));
+				
+				if(obj !== null && typeof obj === "object") {
+					if(typeof opts.defaultNSPrefix === "string") {
+						obj = Object.fromEntries(Object.entries(obj)
+							.map(e => e[0].includes(":") || e[0].startsWith("@_") || e[0].startsWith("#text") ? 
+								[e[0], loop(e[1])] : 
+								[opts.defaultNSPrefix + ":" + e[0], loop(e[1])]
+							));
+					}
+					if(typeof opts.namespaces === "object") {
+						obj = Object.fromEntries(Object.entries(obj)
+							.map(e => {
+								const qName = e[0].split(":");
+								const prefix = qName.length == 2 ? qName[0] : "";
+								
+								if(prefix) {
+									const alias = (namespaces[prefix] || {}).alias || prefix;
+									e[0] = (alias ? alias + ":" : "") + qName.pop();
+								}
+								
+								e[1] = loop(e[1]);
+								
+								return e;
+							})
+						)
+					} else if(opts.stripNS) {
+						obj = Object.fromEntries(Object.entries(obj)
+							.map(e => [e[0].split(":").pop(), loop(e[1])]));
+					}
+				}
+
+				return obj;
+			};
+			const doc2 = loop(xml_doc);
+			if(doc2 !== xml_doc) {
+				Object.keys(xml_doc).forEach(k => delete xml_doc[k]);
+				Object.keys(doc2).forEach(k => xml_doc[k] = doc2[k])
+			}
+		},
+		
 		// stringify: (obj, type, resolved) => {
 		// 	// obj - parsed GML-entity 
 			
@@ -425,15 +432,13 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 		// 	});
 		// },
 		replaceXmlEntities: replace_xmlEntities,
-		
-		getNamespaceIdentifier: getNamespaceIdentifier,
+		getNamespacePrefix: getNamespacePrefix,
 		
 		jsonfy: (node, options) => jsonfy(node, options),
 		stringify: (node, options) => stringify(node, options),
 
 		doc2source: doc2source,		
 		gml: gml, 
-		// gml2ol: gml2ol,
 		gml2geojson: gml2geojson,
 		imkl2geojson: imkl2geojson
 	});
