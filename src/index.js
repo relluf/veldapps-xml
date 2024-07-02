@@ -1,4 +1,4 @@
-define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
+define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(FXP, CP, nameOf) {
 	
 	var Xml;
 
@@ -332,8 +332,9 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 	);
 	return (Xml = {
 		parse: (text, opts) => {
-			let xml_doc = FXP.parse(text, js.mi({ignoreAttributes: false, 
-				parseTrueNumberOnly: true}, opts || {}));
+			let xml_doc = opts && opts.comments === "kvp" ? 
+				CP.parse(text, js.mi({ preserveAttributes: true, preserveDocumentNode: true }, opts || {})) : 
+				FXP.parse(text, js.mi({ignoreAttributes: false, parseTrueNumberOnly: true}, opts || {}));
 				
 			if(typeof opts !== "undefined") {
 				Xml.applyParseOptions(xml_doc, opts);
@@ -374,6 +375,15 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 								[opts.defaultNSPrefix + ":" + e[0], loop(e[1])]
 							));
 					}
+					if(opts.comments === "kvp" && obj._comments) {
+						obj._comments.map(s => s.substring(3, s.length - 2).split(": "))
+							.forEach(e => obj[e[0].replace(/-/, ":")] = e[1])
+						delete obj._comments;
+					}
+					if(obj['@_']) {
+						Object.keys(obj['@_']).forEach(key => obj['@_' + key] = obj['@_'][key]);
+						delete obj['@_'];
+					}
 					if(typeof opts.namespaces === "object") {
 						obj = Object.fromEntries(Object.entries(obj)
 							.map(e => {
@@ -393,6 +403,8 @@ define(["./fast-xml-parser/parser", "js/nameOf"], function(FXP, nameOf) {
 					} else if(opts.stripNS) {
 						obj = Object.fromEntries(Object.entries(obj)
 							.map(e => [e[0].split(":").pop(), loop(e[1])]));
+					} else {
+						Object.keys(obj).forEach(k => loop(obj[k]));
 					}
 				}
 
