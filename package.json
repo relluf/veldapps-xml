@@ -1,6 +1,6 @@
 {
   "name": "veldapps-xml",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Veldapps package for handling XML resources",
   "main": "index.js",
   "scripts": {
