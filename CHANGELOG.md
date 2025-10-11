@@ -1,4 +1,4 @@
-### 2025/10/10 — 1.0.7
+### 2025/10/10 — 1.0.8
 
 - Stops filtering out `"xmlns"` attributes during parsing — now preserved in attribute maps.
 - Adds **`escape(str)`** for XML-safe encoding (`&`, `<`, `>`, `'`, `"`).
@@ -23,7 +23,7 @@
 * Fixes attribute prefix normalization so `@_` names keep the attribute marker after aliasing.
 * Minor parser cleanup and reordering; behavior of `parse()` unchanged aside from new post-processing options.
 
-
+...
 
 ### 2021/09/25 - 1.0.5
 
