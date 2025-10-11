@@ -742,7 +742,7 @@ function buildAttributesMap(attrStr,options){
         var attrs = {};
         for (var i = 0; i < len ; i++) {
             var attrName = resolveNameSpace(matches[i][1],options);
-            if(attrName.length && attrName !== "xmlns") {
+            if(attrName.length/* && attrName !== "xmlns"*/) {
                 if(matches[i][4]){
                     if(options.trimValues){
                         matches[i][4] = matches[i][4].trim();
@@ -754,7 +754,6 @@ function buildAttributesMap(attrStr,options){
                 }else if(options.allowBooleanAttributes){
                     attrs[options.attributeNamePrefix + attrName] = true;
                 }
-                
             }
         }
         if(!Object.keys(attrs).length){

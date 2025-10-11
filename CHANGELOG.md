@@ -1,3 +1,30 @@
+### 2025/10/10 — 1.0.7
+
+- Stops filtering out `"xmlns"` attributes during parsing — now preserved in attribute maps.
+- Adds **`escape(str)`** for XML-safe encoding (`&`, `<`, `>`, `'`, `"`).
+- Adds **`skipPrologue(xml)`** to trim XML declarations before parsing.
+- Introduces **`nodify(xml_doc)`**, converting parsed XML objects into a DOM-like tree with attributes and child nodes.
+- Refactors **namespace handling**: improved alias resolution and default namespace prefix detection.
+- Adds smarter mapping for `@_xmlns` and schema locations.
+- Cleans up and modernizes `replaceXmlEntities()` → `replaceXmlEntities` (camelCase).
+- Updates `Xml.applyParseOptions()` with support for nested namespace alias sets and dynamic `defaultNSPrefix`.
+- Exports new helpers: `escape`, `skipPrologue`, `jsonfy`, `nodify`, and improved alias detection in `nameOf`.
+- Minor cleanup and reordering of logic in XML parser internals.
+* Bumps version to **1.0.7**.
+* Preserves `"xmlns"` attributes in parsed attribute maps (no longer filtered).
+* Renames internal `replace_xmlEntities` → `replaceXmlEntities`; exported name remains `replaceXmlEntities`.
+* Adds `escape(str)` for XML-safe encoding of `& < > ' "`.
+* Adds `skipPrologue(xml)` to strip `<?xml ...?>` before parsing.
+* Introduces `nodify(xml_doc, options)` producing DOM-like nodes with `name`, `attributes`, and `childNodes`.
+* Exports new helpers: `escape`, `skipPrologue`, `nodify` (alongside existing `replaceXmlEntities`, `jsonfy`, `stringify`).
+* `applyParseOptions()` now accepts **multiple URIs per alias** in `opts.namespaces` and builds a reverse map.
+* Automatically sets `defaultNSPrefix` from `@_xmlns` when not provided.
+* Improves namespace alias resolution for elements and attributes (incl. `:schemaLocation` handling).
+* Fixes attribute prefix normalization so `@_` names keep the attribute marker after aliasing.
+* Minor parser cleanup and reordering; behavior of `parse()` unchanged aside from new post-processing options.
+
+
+
 ### 2021/09/25 - 1.0.5
 
 - Introducing/packing veldapps-xml/Writer

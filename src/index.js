@@ -285,10 +285,27 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 	  
 	    return nsPrefix;
 	}
-	function replace_xmlEntities(str) {
+	function replaceXmlEntities(str) {
 		return str && str.replace ? str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
 			.replace(/&apos;/g, "'").replace("&quot;", "\"") : str;
 	};
+	function escape(str) {
+		return str && str.replace
+			? str
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/'/g, "&apos;")
+				.replace(/"/g, "&quot;")
+			: str;
+	}	
+	
+	function skipPrologue(xml) {
+		if(!xml) return xml;
+		// Find the end of the prologue if it exists
+		const prologueEnd = xml.indexOf("?>");
+		return xml.substring(prologueEnd !== -1 ? prologueEnd + 2 : 0).trim();
+	}
 
 	nameOf.methods.push(
 		(obj) => {
@@ -325,36 +342,85 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		},
 		(obj) => {
 			var t = obj['#text'];
-			return (t && js.nameOf((t = replace_xmlEntities(t)))) || t;
+			return (t && js.nameOf((t = replaceXmlEntities(t)))) || t;
 		},
 		(obj) => (obj['@_name']),
-		(obj) => (obj['@_id'])
+		(obj) => (obj['@_id']),
+		(obj) => { 
+			const keys = Object.keys(obj); 
+			if(keys.length === 1 && keys[0].split(":") === 2) {
+				const v = obj[keys[0]];
+				if(typeof v === "object" && v !== null ) {
+					return keys[0];
+				}
+			}
+		}
 	);
+	
 	return (Xml = {
-		parse: (text, opts) => {
-			let xml_doc = opts && opts.comments === "kvp" ? 
-				CP.parse(text, js.mi({ preserveAttributes: true, preserveDocumentNode: true }, opts || {})) : 
-				FXP.parse(text, js.mi({ignoreAttributes: false, parseTrueNumberOnly: true}, opts || {}));
+
+		jsonfy: (node, options) => jsonfy(node, options),
+		stringify: (node, options) => { 
+			return stringify(node, options);
+		},
+		nodify: (xml_doc, options) => {
+			const root = Object.keys(xml_doc)[0];
+			const make_node = (elem, name) => {
+				const attributeNames = Object.keys(elem).filter(key => key.startsWith("@_"));
+				const elementNames = Object.keys(elem).filter(key => !key.startsWith("@_") && key !== "#text");
+				const node = {
+					name: name,
+					childNodes: [],
+					attributes: {}
+				};
+
+				elementNames.forEach(elName => {
+					if(elem[elName] instanceof Array) {
+						elem[elName].forEach(el => node.childNodes.push(make_node(el, elName)));
+					} else {
+						const el = elem[elName];
+						if(typeof el === "object") {
+							node.childNodes.push(make_node(el, elName));
+						} else {
+							node.childNodes.push({name: elName, childNodes: ["" + el] })
+						}
+					}
+				});
 				
-			if(typeof opts !== "undefined") {
-				Xml.applyParseOptions(xml_doc, opts);
+				if(elem['#text'] !== undefined) {
+					node.childNodes.push("" + elem['#text']);
+				}
+				
+				attributeNames.forEach(aName => {
+					// remove @_
+					node.attributes[aName.substring(2)] = elem[aName];
+				});
+				
+				if(!node.childNodes.length) delete node.childNodes;
+				if(!Object.keys(node.attributes).length) delete node.attributes;
+
+				return node;
 			}
 			
-			return xml_doc;	
+			return make_node(xml_doc[root], root);
 		},
+
 		applyParseOptions: (xml_doc, opts) => {
 			const namespaces = {}, root = xml_doc[Object.keys(xml_doc)[0]];
 			if(opts.namespaces) {
-				const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => [e[1], e[0]]));
+				const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => e[1].map(ns => [ns, e[0]])).flat())
 				Object.keys(root)
 					.filter(k => k.startsWith("@_xmlns") || k.endsWith(":schemaLocation"))
 					.forEach(k => {
-						namespaces[k.split(":").pop()] = {
+						namespaces[k === '@_xmlns' ? '' : k.split(":").pop()] = {
 							url: root[k], 
-							alias: ns[root[k]] || k.split(":").pop()
+							alias: ns[root[k]] || k.split(":")[1] || ns['']
 						};
 					});
 					
+				if(namespaces[''] && !opts.hasOwnProperty("defaultNSPrefix")) {
+					opts.defaultNSPrefix = namespaces[''].alias;
+				}
 				// TODO this is not foolproof (xsi:)
 				if(namespaces.schemaLocation) {
 					namespaces[''] = {
@@ -368,13 +434,27 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 				if(obj instanceof Array) return obj.map(o => loop(o));
 				
 				if(obj !== null && typeof obj === "object") {
-					if(typeof opts.defaultNSPrefix === "string") {
+					if(opts.defaultNSPrefix) {
 						obj = Object.fromEntries(Object.entries(obj)
 							.map(e => e[0].includes(":") || e[0].startsWith("@_") || e[0].startsWith("#text") ? 
 								[e[0], loop(e[1])] : 
 								[opts.defaultNSPrefix + ":" + e[0], loop(e[1])]
 							));
 					}
+					// if(typeof opts.defaultNSPrefix === "string") {
+					// 	const prefix = opts.defaultNSPrefix;
+					// 	const shouldStrip = opts.stripDefaultNSPrefix === true;
+					
+					// 	obj = Object.fromEntries(Object.entries(obj)
+					// 		.map(([key, value]) => {
+					// 			if (key.includes(":") || key.startsWith("@_") || key.startsWith("#text")) {
+					// 				return [key, loop(value)];
+					// 			} else {
+					// 				const newKey = shouldStrip ? key : prefix + ":" + key;
+					// 				return [newKey, loop(value)];
+					// 			}
+					// 		}));
+					// }
 					if(opts.comments === "kvp" && obj._comments) {
 						obj._comments.map(s => s.substring(3, s.length - 2).split(": "))
 							.forEach(e => obj[e[0].replace(/-/, ":")] = e[1])
@@ -388,11 +468,18 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 						obj = Object.fromEntries(Object.entries(obj)
 							.map(e => {
 								const qName = e[0].split(":");
-								const prefix = qName.length == 2 ? qName[0] : "";
+								const prefix = (qName.length == 2 ? qName[0] : "");
 								
 								if(prefix) {
-									const alias = (namespaces[prefix] || {}).alias || prefix;
+									const alias = (namespaces[prefix.replace(/\@_/, "")] || {}).alias || prefix;
 									e[0] = (alias ? alias + ":" : "") + qName.pop();
+									if(prefix.match(/\@_/, "")) {
+										if(!e[0].startsWith("@_")) {
+											e[0] = "@_" + e[0];
+										} else {
+											// TODO find out why this can happen
+										}
+									}
 								}
 								
 								e[1] = loop(e[1]);
@@ -416,43 +503,25 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 				Object.keys(doc2).forEach(k => xml_doc[k] = doc2[k])
 			}
 		},
-		
-		// stringify: (obj, type, resolved) => {
-		// 	// obj - parsed GML-entity 
+		parse: (text, opts) => {
+			let xml_doc = opts && opts.comments === "kvp" ? 
+				CP.parse(text, js.mi({ preserveAttributes: true, preserveDocumentNode: true }, opts || {})) : 
+				FXP.parse(text, js.mi({ignoreAttributes: false, parseTrueNumberOnly: true}, opts || {}));
+				
+			if(typeof opts !== "undefined") {
+				Xml.applyParseOptions(xml_doc, opts);
+			}
 			
-		// 	if(!resolved) {
-		// 		resolved = [];
-		// 		var r = [];
-		// 		r.push(Xml.stringify(obj, type, resolved));
-		// 		for(var i = 0; i < resolved.length; ++i) {
-		// 			r.push(Xml.stringify(resolved[i], undefined, resolved));
-		// 		}
-		// 		return r;
-		// 	}
-		// 	if(typeof type === "string") {
-		// 		var o = {}; 
-		// 		o[type] = obj;
-		// 		obj = o;
-		// 	}
-			
-		// 	return JSON.stringify(obj, (key, value) => {
-		// 		if(key === "@_xlink:href-resolved") {
-		// 			if(resolved.indexOf(value) === -1) {
-		// 				resolved.push(value);
-		// 			}
-		// 		} else return value;
-		// 	});
-		// },
-		replaceXmlEntities: replace_xmlEntities,
-		getNamespacePrefix: getNamespacePrefix,
-		
-		jsonfy: (node, options) => jsonfy(node, options),
-		stringify: (node, options) => stringify(node, options),
+			return xml_doc;	
+		},
 
-		doc2source: doc2source,		
-		gml: gml, 
-		gml2geojson: gml2geojson,
-		imkl2geojson: imkl2geojson
+		replaceXmlEntities,
+		getNamespacePrefix,
+		skipPrologue, 
+		
+		doc2source, escape,
+		
+		gml, gml2geojson, imkl2geojson
 	});
 
 });
