@@ -1,3 +1,20 @@
+### 2026/08/07 — XML traversal, safer xlinks and reusable GML scanning
+
+#### XML object helpers and parsing
+
+- Extends [src/index.js]() with namespace-agnostic text, attribute, child, recursive collection, coordinate and SRS/EPSG helpers for package-owned document interpreters.
+- Adds named and numeric XML entity decoding with an in-place fallback when the bundled parser does not honour `decodeHTMLchar`, supports `removeNSPrefix` as a strip-namespace option and registers GML IDs once as preferred object names.
+- Makes IMKL traversal tolerate null or repeated objects and resolves internal xlinks in two passes through cycle-safe collection, non-enumerable lazy targets and resolution statistics while leaving external references untouched.
+
+#### GML scan and geometry extraction
+
+- Adds [src/gml.js]() for source-text scanning of GML feature members, types, IDs, geometry primitives/properties, local xlinks and source offsets without first building a full parsed feature tree.
+- Adds feature/type indexes, referenced-geometry traversal, generic layer planning, summary and feature views, source-fragment lookup and extraction of Point, LineString, Curve, Polygon, Surface and MultiSurface geometries.
+
+#### Repository metadata
+
+- Adds [package_monitor.log]() with the retained four-line 2023 package-monitor history for the package's `.md` resource.
+
 ### 2025/10/10 — 1.0.8
 
 - Stops filtering out `"xmlns"` attributes during parsing — now preserved in attribute maps.

@@ -21,6 +21,122 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		
 		return [arr];
 	}
+	function textOf(value) {
+		if(value === undefined || value === null) return "";
+		if(typeof value === "string" || typeof value === "number" || typeof value === "boolean") return "" + value;
+		if(value instanceof Array) return value.map(textOf).filter(Boolean).join("\n");
+		return value["#text"] || value._Data || value._data || value.text || "";
+	}
+	function localName(key) {
+		return String(key || "").replace(/^@_?/, "").split(":").pop();
+	}
+	function isAttributeKey(key) {
+		return (/^@_?/).test(key);
+	}
+	function attr(obj, name) {
+		var keys = ["@_" + name, "@" + name, name];
+		var value;
+		if(!obj || typeof obj !== "object") return "";
+		for(var i = 0; i < keys.length; ++i) {
+			value = obj[keys[i]];
+			if(value !== undefined && value !== null) return value;
+		}
+		return "";
+	}
+	function childEntries(obj, names) {
+		names = asArray(names);
+		if(!obj || typeof obj !== "object") return [];
+		return Object.keys(obj)
+			.filter(function(key) { return !isAttributeKey(key) && names.indexOf(localName(key)) !== -1; })
+			.map(function(key) {
+				return asArray(obj[key]).map(function(value) {
+					return { key: localName(key), value: value, sourceKey: key };
+				});
+			})
+			.reduce(function(acc, values) { return acc.concat(values); }, []);
+	}
+	function childValues(obj, names) {
+		return childEntries(obj, names).map(function(entry) { return entry.value; });
+	}
+	function firstChild(obj, names) {
+		return childValues(obj, names)[0];
+	}
+	function hasKeyMatching(obj, matcher, seen) {
+		seen = seen || [];
+		if(obj instanceof Array) {
+			return obj.some(function(value) { return hasKeyMatching(value, matcher, seen); });
+		}
+		if(!obj || typeof obj !== "object") {
+			return false;
+		}
+		if(seen.indexOf(obj) !== -1) {
+			return false;
+		}
+		seen.push(obj);
+		return Object.keys(obj).some(function(key) {
+			return matcher(key, obj[key]) || hasKeyMatching(obj[key], matcher, seen);
+		});
+	}
+	function coordinatePairsFromText(value) {
+		var numbers = textOf(value).replace(/,/g, " ").trim()
+			.split(/\s+/)
+			.map(function(value) { return parseFloat(value); })
+			.filter(function(value) { return !isNaN(value); });
+		var coordinates = [];
+		for(var i = 0; i + 1 < numbers.length; i += 2) {
+			coordinates.push([numbers[i], numbers[i + 1]]);
+		}
+		return coordinates;
+	}
+	function collectValuesForKeys(obj, keys, values, seen) {
+		values = values || [];
+		seen = seen || [];
+		if(obj instanceof Array) {
+			obj.forEach(function(value) { collectValuesForKeys(value, keys, values, seen); });
+		} else if(obj && typeof obj === "object") {
+			if(seen.indexOf(obj) !== -1) return values;
+			seen.push(obj);
+			Object.keys(obj).forEach(function(key) {
+				if(keys.indexOf(key) !== -1) {
+					values.push(obj[key]);
+				}
+				collectValuesForKeys(obj[key], keys, values, seen);
+			});
+		}
+		return values;
+	}
+	function collectObjectsForKeys(obj, keys, values, seen) {
+		values = values || [];
+		seen = seen || [];
+		if(obj instanceof Array) {
+			obj.forEach(function(value) { collectObjectsForKeys(value, keys, values, seen); });
+		} else if(obj && typeof obj === "object") {
+			if(seen.indexOf(obj) !== -1) return values;
+			seen.push(obj);
+			Object.keys(obj).forEach(function(key) {
+				if(keys.indexOf(key) !== -1) {
+					asArray(obj[key]).forEach(function(value) {
+						if(values.indexOf(value) === -1) values.push(value);
+					});
+				}
+				collectObjectsForKeys(obj[key], keys, values, seen);
+			});
+		}
+		return values;
+	}
+	function srsNameOf(obj) {
+		return collectValuesForKeys(obj, ["@_srsName", "@srsName", "srsName"])
+			.map(textOf)
+			.filter(Boolean)[0] || "";
+	}
+	function epsgCodeOf(srsName) {
+		var text = String(srsName || "");
+		var match = text.match(/EPSG(?::|::|\/|#)(\d+)/i) || text.match(/epsg\.xml#(\d+)/i);
+		return match ? "EPSG:" + match[1] : "";
+	}
+	function projectionCodeOf(obj) {
+		return epsgCodeOf(srsNameOf(obj));
+	}
 	function types(scrape_gml_root, opts) {
 		var r = {};
 		for(var k in scrape_gml_root) {
@@ -32,34 +148,91 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 	}
 
 	function gml(root, messages, opts) {
-		function resolve_xlinks(elems, elem, log, done) {
-			var key = "@_xlink:href-resolved", href;
-			
-			done = done || [];
-			if(done.indexOf(elem) !== -1) return;
-			done.push(elem);
-			
-			for(var k in elem) {
-				if(k !== key && typeof elem[k] === "object") {
-					resolve_xlinks(elems, elem[k], log); // <- what about done? 
-				}
+		function createSeen() {
+			if(typeof WeakSet !== "undefined") {
+				var weak = new WeakSet();
+				return {
+					has: function(obj) { return weak.has(obj); },
+					add: function(obj) { weak.add(obj); }
+				};
 			}
-		
-			if((href = elem['@_xlink:href'])) {
-				if(href.charAt(0) === '#') href = href.substring(1);
-				if(!(elem[key] = elems[href])) {
-					log && log.push(String.format("%s not found", href));
+			var items = [];
+			return {
+				has: function(obj) { return items.indexOf(obj) !== -1; },
+				add: function(obj) { items.push(obj); }
+			};
+		}
+		function defineResolvedXlink(elem, key, target) {
+			try {
+				Object.defineProperty(elem, key, {
+					configurable: true,
+					enumerable: false,
+					get: function() {
+						Object.defineProperty(elem, key, {
+							configurable: true,
+							enumerable: false,
+							writable: true,
+							value: target
+						});
+						return target;
+					}
+				});
+			} catch(e) {
+				elem[key] = target;
+			}
+		}
+		function collect_gml_refs(elems, hrefs, elem, seen, stats) {
+			var key = "@_xlink:href-resolved";
+			if(!elem || typeof elem !== "object") return;
+			if(seen.has(elem)) {
+				stats.skipped = (stats.skipped || 0) + 1;
+				return;
+			}
+			seen.add(elem);
+			stats.visited = (stats.visited || 0) + 1;
+			if(elem["@_gml:id"] && elems[elem["@_gml:id"]] === undefined) {
+				elems[elem["@_gml:id"]] = elem;
+				stats.ids = (stats.ids || 0) + 1;
+			}
+			if(elem['@_xlink:href']) {
+				hrefs.push(elem);
+			}
+			for(var k in elem) {
+				if(k !== key && elem[k] && typeof elem[k] === "object") {
+					collect_gml_refs(elems, hrefs, elem[k], seen, stats);
 				}
 			}
 		}
+		function resolve_xlinks(elems, hrefs, log, stats) {
+			var key = "@_xlink:href-resolved";
+			hrefs.forEach(function(elem) {
+				var href = elem['@_xlink:href'];
+				if(href.charAt(0) !== '#') {
+					stats.external = (stats.external || 0) + 1;
+					return;
+				}
+				href = href.substring(1);
+				if(elems[href] !== undefined) {
+					defineResolvedXlink(elem, key, elems[href]);
+					stats.resolved = (stats.resolved || 0) + 1;
+				} else {
+					stats.unresolved = (stats.unresolved || 0) + 1;
+					log && log.push(String.format("%s not found", href));
+				}
+			});
+		}
 		
+		opts = opts || {};
+		var started = Date.now();
 		var key = Object.keys(root)[0];
 		var ns = key.split(":")[0];
 		var features = asArray(root[key][ns + ":featureMember"]);
 		var elems = {}, map = {}; /* return value */
+		var hrefs = [];
 		var log = [];
+		var stats = { features: features.length };
 	
-		resolve_xlinks(elems, root);
+		collect_gml_refs(elems, hrefs, root, createSeen(), stats);
 		features.forEach(function(_) {
 			var key = Object.keys(_)[0];
 			var arr = (map[key] = map[key] || []);
@@ -68,7 +241,14 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 	
 			arr.push(_[key]);
 		});
-		resolve_xlinks(elems, root, log);
+		resolve_xlinks(elems, hrefs, log, stats);
+		stats.duration = Date.now() - started;
+		stats.hrefs = hrefs.length;
+		stats.lazy = true;
+		stats.types = Object.keys(map).length;
+		if((opts.debug || stats.duration > 1000) && typeof console !== "undefined" && console.warn) {
+			console.warn("[veldapps-xml] gml xlink resolve", stats);
+		}
 		
 		return messages && log.length ? { messages: log, result: map } : map;
 		// return map;
@@ -121,7 +301,7 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 				path = path || [];
 				objs = objs || [];
 				
-				if(objs.indexOf(item) !== -1) return;
+				if(!item || typeof item !== "object" || objs.indexOf(item) !== -1) return {};
 				
 				objs.push(item);
 				
@@ -143,7 +323,7 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 							}
 						} else if(key === "net:link") {
 							js.mixIn(r, walk(item[key]["@_xlink:href-resolved"], path, objs));
-						} else if(typeof item[key] === "object") {
+						} else if(item[key] && typeof item[key] === "object") {
 							js.mixIn(r, walk(item[key], path, objs));
 						}
 						path.pop();
@@ -289,6 +469,46 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		return str && str.replace ? str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
 			.replace(/&apos;/g, "'").replace("&quot;", "\"") : str;
 	};
+	function xmlEntityDecoded(value) {
+		if(typeof value !== "string") return value;
+		return value
+			.replace(/&#x([0-9a-f]+);/gi, function(match, code) { return String.fromCodePoint(parseInt(code, 16)); })
+			.replace(/&#([0-9]+);/g, function(match, code) { return String.fromCodePoint(parseInt(code, 10)); })
+			.replace(/&lt;/g, "<")
+			.replace(/&gt;/g, ">")
+			.replace(/&apos;/g, "'")
+			.replace(/&quot;/g, "\"")
+			.replace(/&amp;/g, "&");
+	}
+	var xmlParseDecodesEntities;
+	function xmlParseSupportsEntityDecode() {
+		if(xmlParseDecodesEntities === undefined) {
+			var parsed = FXP.parse("<value>&amp;</value>", { ignoreAttributes: false, decodeHTMLchar: true });
+			xmlParseDecodesEntities = parsed && parsed.value === "&";
+		}
+		return xmlParseDecodesEntities;
+	}
+	function decodeXmlEntitiesInPlace(value, seen) {
+		if(value instanceof Array) {
+			value.forEach(function(item, index) {
+				value[index] = typeof item === "string" ? xmlEntityDecoded(item) : decodeXmlEntitiesInPlace(item, seen);
+			});
+			return value;
+		}
+		if(!value || typeof value !== "object") {
+			return value;
+		}
+		seen = seen || [];
+		if(seen.indexOf(value) !== -1) {
+			return value;
+		}
+		seen.push(value);
+		Object.keys(value).forEach(function(key) {
+			var item = value[key];
+			value[key] = typeof item === "string" ? xmlEntityDecoded(item) : decodeXmlEntitiesInPlace(item, seen);
+		});
+		return value;
+	}
 	function escape(str) {
 		return str && str.replace
 			? str
@@ -307,6 +527,11 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		return xml.substring(prologueEnd !== -1 ? prologueEnd + 2 : 0).trim();
 	}
 
+	if(!nameOf.methods.some(method => method._veldappsXmlGmlId === true)) {
+		const nameOfGmlId = (obj) => obj.gml_id || obj["@_gml:id"] || obj["@gml:id"];
+		nameOfGmlId._veldappsXmlGmlId = true;
+		nameOf.methods.unshift(nameOfGmlId);
+	}
 	nameOf.methods.push(
 		(obj) => {
 			if(obj['@_xsi:type']) {
@@ -319,10 +544,10 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		},
 		(obj) => {
 			var keys = Object.keys(obj);
-			if(keys.length === 2 && keys[1] === "@_xlink:href-resolved") {
-				if(obj[keys[1]] !== undefined) {
-					return js.nameOf(obj[keys[1]]);
-				} else {
+			if(Object.prototype.hasOwnProperty.call(obj, "@_xlink:href-resolved")) {
+				if(obj["@_xlink:href-resolved"] !== undefined) {
+					return js.nameOf(obj["@_xlink:href-resolved"]);
+				} else if(keys.length) {
 					return js.nameOf(obj[keys[0]]);
 				}
 			}
@@ -405,7 +630,7 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 			return make_node(xml_doc[root], root);
 		},
 
-		applyParseOptions: (xml_doc, opts) => {
+		applyParseOptions: (xml_doc, opts = {}) => {
 			const namespaces = {}, root = xml_doc[Object.keys(xml_doc)[0]];
 			if(opts.namespaces) {
 				const ns = Object.fromEntries(Object.entries(opts.namespaces).map(e => e[1].map(ns => [ns, e[0]])).flat())
@@ -487,7 +712,7 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 								return e;
 							})
 						)
-					} else if(opts.stripNS) {
+					} else if(opts.stripNS || opts.removeNSPrefix) {
 						obj = Object.fromEntries(Object.entries(obj)
 							.map(e => [e[0].split(":").pop(), loop(e[1])]));
 					} else {
@@ -507,6 +732,10 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 			let xml_doc = opts && opts.comments === "kvp" ? 
 				CP.parse(text, js.mi({ preserveAttributes: true, preserveDocumentNode: true }, opts || {})) : 
 				FXP.parse(text, js.mi({ignoreAttributes: false, parseTrueNumberOnly: true}, opts || {}));
+
+			if(opts && opts.decodeHTMLchar && !xmlParseSupportsEntityDecode()) {
+				decodeXmlEntitiesInPlace(xml_doc);
+			}
 				
 			if(typeof opts !== "undefined") {
 				Xml.applyParseOptions(xml_doc, opts);
@@ -516,6 +745,24 @@ define(["./fast-xml-parser/parser", "./comment-parser", "js/nameOf"], function(F
 		},
 
 		replaceXmlEntities,
+		xmlEntityDecoded,
+		xmlParseSupportsEntityDecode,
+		decodeXmlEntitiesInPlace,
+		textOf,
+		localName,
+		localNameOf: localName,
+		isAttributeKey,
+		attr,
+		childEntries,
+		childValues,
+		firstChild,
+		hasKeyMatching,
+		coordinatePairsFromText,
+		collectValuesForKeys,
+		collectObjectsForKeys,
+		srsNameOf,
+		epsgCodeOf,
+		projectionCodeOf,
 		getNamespacePrefix,
 		skipPrologue, 
 		
